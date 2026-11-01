@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strconv"
 
 	"github.com/mymmrac/telego"
@@ -15,7 +16,7 @@ type Bot struct {
 }
 
 func NewBot(token, targetChat string) (*Bot, error) {
-	bot, err := telego.NewBot(token, telego.WithDefaultDebugLogger())
+	bot, err := telego.NewBot(token)
 	if err != nil {
 		return nil, err
 	}
@@ -52,8 +53,71 @@ func (b *Bot) Run() error {
 	if err != nil {
 		return err
 	}
+	handler := NewHandler(b.client, telego.ChatID{ID: *b.targetChatID}, nil)
+	routes := []Route{
+		{
+			Match: func(u telego.Update) bool {
+				if u.Message != nil {
+					if b.targetChatID != nil {
+						if u.Message.Chat.ID != *b.targetChatID {
+							if u.Message.Text == "/start" {
+								return true
+							}
+						}
+					}
+				}
+				return false
+			},
+			Handle: handler.OnStart,
+		},
+		{
+			Match: func(u telego.Update) bool {
+				if u.Message != nil {
+					if b.targetChatID == nil {
+						text := u.Message.Text
+						if text == "/id" || text == "/chatid" {
+							return true
+						}
+					}
+				}
+				return false
+			},
+			Handle: handler.OnGetChatID,
+		},
+		{
+			Match: func(u telego.Update) bool {
+				if u.Message != nil {
+					if b.targetChatID != nil {
+						if u.Message.Chat.ID != *b.targetChatID {
+							return true
+						}
+					}
+				}
+				return false
+			},
+			Handle: handler.OnUserMessage,
+		},
+		{
+			Match: func(u telego.Update) bool {
+				if u.Message != nil {
+					if b.targetChatID != nil {
+						if u.Message.Chat.ID == *b.targetChatID {
+							return true
+						}
+					}
+				}
+				return false
+			},
+			Handle: handler.OnSupportMessage,
+		},
+	}
+	router := NewRouter(routes)
 	for upd := range updChan {
-		go b.handleUpdate(ctx, upd)
+		go func() {
+			if err := router.Route(ctx, upd); err != nil {
+				slog.ErrorContext(ctx, err.Error())
+			}
+		}()
 	}
 	return nil
 }
