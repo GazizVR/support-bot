@@ -2,32 +2,41 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/gazizvr/support-bot/internal/domain"
 	"github.com/mymmrac/telego"
 )
 
-type TicketStore interface {
-	Get(ctx context.Context, id int64) (int64, error)
-	Set(ctx context.Context, id int64) error
-	Del(ctx context.Context, id int64) error
+type TopicStore interface {
+	Get(ctx context.Context, id int64) (int, error)
+	Set(ctx context.Context, id int64, topicID int) error
+}
+
+type UserStore interface {
+	Get(ctx context.Context, id int) (int64, error)
+	Set(ctx context.Context, id int, userID int64) error
 }
 
 type Handler struct {
 	bot          *telego.Bot
 	targetChatID telego.ChatID
-	store        TicketStore
+	topicStore   TopicStore
+	userStore    UserStore
 }
 
 func NewHandler(
 	bot *telego.Bot,
 	targetChatID telego.ChatID,
-	store TicketStore,
+	topicStore TopicStore,
+	userStore UserStore,
 ) *Handler {
 	return &Handler{
 		bot:          bot,
 		targetChatID: targetChatID,
-		store:        store,
+		topicStore:   topicStore,
+		userStore:    userStore,
 	}
 }
 
@@ -63,21 +72,36 @@ func (h *Handler) OnGetChatID(ctx context.Context, u telego.Update) error {
 }
 
 func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
-	topic, err := h.bot.CreateForumTopic(
-		ctx,
-		&telego.CreateForumTopicParams{
-			ChatID: h.targetChatID,
-			Name:   fmt.Sprintf("%d", u.Message.Chat.ID),
-		},
-	)
+	chatID := u.Message.Chat.ID
+	topicID, err := h.topicStore.Get(ctx, chatID)
 	if err != nil {
-		return err
+		if errors.Is(err, domain.ErrNotFound) {
+			topic, err := h.bot.CreateForumTopic(
+				ctx,
+				&telego.CreateForumTopicParams{
+					ChatID: h.targetChatID,
+					Name:   u.Message.From.FirstName,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			topicID = topic.MessageThreadID
+			if err := h.topicStore.Set(ctx, chatID, topicID); err != nil {
+				return err
+			}
+			if err := h.userStore.Set(ctx, topicID, chatID); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 	if _, err := h.bot.CopyMessage(
 		ctx,
 		&telego.CopyMessageParams{
 			ChatID:          h.targetChatID,
-			MessageThreadID: topic.MessageThreadID,
+			MessageThreadID: topicID,
 			MessageID:       u.Message.MessageID,
 			FromChatID:      u.Message.Chat.ChatID(),
 		},
@@ -88,16 +112,19 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 }
 
 func (h *Handler) OnSupportMessage(ctx context.Context, u telego.Update) error {
-	// if _, err := h.bot.CopyMessage(
-	// 	ctx,
-	// 	&telego.CopyMessageParams{
-	// 		ChatID:          ,
-	// 		MessageThreadID: u.Message.MessageThreadID,
-	// 		MessageID:       u.Message.MessageID,
-	// 		FromChatID:      u.Message.Chat.ChatID(),
-	// 	},
-	// ); err != nil {
-	// 	return err
-	// }
+	userID, err := h.userStore.Get(ctx, u.Message.MessageThreadID)
+	if err != nil {
+		return err
+	}
+	if _, err := h.bot.CopyMessage(
+		ctx,
+		&telego.CopyMessageParams{
+			ChatID:     telego.ChatID{ID: userID},
+			MessageID:  u.Message.MessageID,
+			FromChatID: u.Message.Chat.ChatID(),
+		},
+	); err != nil {
+		return err
+	}
 	return nil
 }

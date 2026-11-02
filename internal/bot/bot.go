@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 
+	"github.com/gazizvr/support-bot/internal/store"
 	"github.com/mymmrac/telego"
 )
 
@@ -13,6 +14,7 @@ type Bot struct {
 	token        string
 	targetChatID *int64
 	client       *telego.Bot
+	info         telego.User
 }
 
 func NewBot(token, targetChat string) (*Bot, error) {
@@ -20,6 +22,14 @@ func NewBot(token, targetChat string) (*Bot, error) {
 	if err != nil {
 		return nil, err
 	}
+	me, err := bot.GetMe(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if me == nil {
+		return nil, errors.New("bot info must not be nil")
+	}
+	info := *me
 	var targetChatID *int64
 	if targetChat != "" {
 		chatID, err := strconv.ParseInt(targetChat, 10, 64)
@@ -44,16 +54,22 @@ func NewBot(token, targetChat string) (*Bot, error) {
 		token:        token,
 		targetChatID: targetChatID,
 		client:       bot,
+		info:         info,
 	}, nil
 }
 
 func (b *Bot) Run() error {
 	ctx := context.Background()
-	updChan, err := b.client.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{Timeout: 45})
+	updChan, err := b.client.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{Timeout: 30})
 	if err != nil {
 		return err
 	}
-	handler := NewHandler(b.client, telego.ChatID{ID: *b.targetChatID}, nil)
+	handler := NewHandler(
+		b.client,
+		telego.ChatID{ID: *b.targetChatID},
+		store.NewTopicStore(),
+		store.NewUserStore(),
+	)
 	routes := []Route{
 		{
 			Match: func(u telego.Update) bool {
@@ -102,7 +118,13 @@ func (b *Bot) Run() error {
 				if u.Message != nil {
 					if b.targetChatID != nil {
 						if u.Message.Chat.ID == *b.targetChatID {
-							return true
+							if u.Message.MessageThreadID != 0 {
+								if u.Message.From != nil {
+									if u.Message.From.ID != b.info.ID {
+										return true
+									}
+								}
+							}
 						}
 					}
 				}
