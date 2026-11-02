@@ -2,4 +2,4 @@ package domain
 
 import "errors"
 
-var ErrNotFound = errors.New("value not found")
+var ErrTicketNotFound = errors.New("ticket not found")

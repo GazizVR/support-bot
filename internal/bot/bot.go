@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strconv"
 
-	"github.com/gazizvr/support-bot/internal/store"
 	"github.com/mymmrac/telego"
 )
 
@@ -15,9 +14,10 @@ type Bot struct {
 	targetChatID *int64
 	client       *telego.Bot
 	info         telego.User
+	store        Store
 }
 
-func NewBot(token, targetChat string) (*Bot, error) {
+func NewBot(token, targetChat string, store Store) (*Bot, error) {
 	bot, err := telego.NewBot(token)
 	if err != nil {
 		return nil, err
@@ -55,6 +55,7 @@ func NewBot(token, targetChat string) (*Bot, error) {
 		targetChatID: targetChatID,
 		client:       bot,
 		info:         info,
+		store:        store,
 	}, nil
 }
 
@@ -64,12 +65,7 @@ func (b *Bot) Run() error {
 	if err != nil {
 		return err
 	}
-	handler := NewHandler(
-		b.client,
-		telego.ChatID{ID: *b.targetChatID},
-		store.NewTopicStore(),
-		store.NewUserStore(),
-	)
+	handler := NewHandler(b.client, telego.ChatID{ID: *b.targetChatID}, b.store)
 	routes := []Route{
 		{
 			Match: func(u telego.Update) bool {

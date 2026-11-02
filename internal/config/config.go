@@ -5,21 +5,25 @@ import (
 )
 
 type Config struct {
-	Token      string
+	BotToken   string
 	TargetChat string
+	RedisAddr  string
+	RedisPswd  string
 }
 
 func Load() (*Config, error) {
-	token := os.Getenv("TOKEN")
-	cfg := &Config{}
-	if token == "" {
-		return nil, ErrTokenEmpty
+	botToken := os.Getenv("BOT_TOKEN")
+	if botToken == "" {
+		return nil, ErrBotTokenEmpty
 	}
-	cfg.Token = token
-	targetChat := os.Getenv("TARGET_CHAT")
-	if targetChat == "" {
-		return cfg, ErrTargetChatEmpty
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		return nil, ErrRedisAddrEmpty
 	}
-	cfg.TargetChat = targetChat
-	return cfg, nil
+	return &Config{
+		BotToken:   botToken,
+		TargetChat: os.Getenv("TARGET_CHAT"),
+		RedisAddr:  redisAddr,
+		RedisPswd:  os.Getenv("REDIS_PASSWORD"),
+	}, nil
 }

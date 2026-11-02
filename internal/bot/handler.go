@@ -9,34 +9,27 @@ import (
 	"github.com/mymmrac/telego"
 )
 
-type TopicStore interface {
-	Get(ctx context.Context, id int64) (int, error)
-	Set(ctx context.Context, id int64, topicID int) error
-}
-
-type UserStore interface {
-	Get(ctx context.Context, id int) (int64, error)
-	Set(ctx context.Context, id int, userID int64) error
+type Store interface {
+	Get(ctx context.Context, id int64) (*domain.Ticket, error)
+	UserIDByThreadID(ctx context.Context, threadID int) (int64, error)
+	Create(ctx context.Context, userID int64, threadID int) error
 }
 
 type Handler struct {
 	bot          *telego.Bot
 	targetChatID telego.ChatID
-	topicStore   TopicStore
-	userStore    UserStore
+	store        Store
 }
 
 func NewHandler(
 	bot *telego.Bot,
 	targetChatID telego.ChatID,
-	topicStore TopicStore,
-	userStore UserStore,
+	store Store,
 ) *Handler {
 	return &Handler{
 		bot:          bot,
 		targetChatID: targetChatID,
-		topicStore:   topicStore,
-		userStore:    userStore,
+		store:        store,
 	}
 }
 
@@ -73,9 +66,9 @@ func (h *Handler) OnGetChatID(ctx context.Context, u telego.Update) error {
 
 func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 	chatID := u.Message.Chat.ID
-	topicID, err := h.topicStore.Get(ctx, chatID)
+	ticket, err := h.store.Get(ctx, chatID)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, domain.ErrTicketNotFound) {
 			topic, err := h.bot.CreateForumTopic(
 				ctx,
 				&telego.CreateForumTopicParams{
@@ -86,11 +79,11 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 			if err != nil {
 				return err
 			}
-			topicID = topic.MessageThreadID
-			if err := h.topicStore.Set(ctx, chatID, topicID); err != nil {
-				return err
+			ticket = &domain.Ticket{
+				UserID:   chatID,
+				ThreadID: topic.MessageThreadID,
 			}
-			if err := h.userStore.Set(ctx, topicID, chatID); err != nil {
+			if err := h.store.Create(ctx, chatID, topic.MessageThreadID); err != nil {
 				return err
 			}
 		} else {
@@ -101,9 +94,9 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 		ctx,
 		&telego.CopyMessageParams{
 			ChatID:          h.targetChatID,
-			MessageThreadID: topicID,
+			MessageThreadID: ticket.ThreadID,
 			MessageID:       u.Message.MessageID,
-			FromChatID:      u.Message.Chat.ChatID(),
+			FromChatID:      telego.ChatID{ID: ticket.UserID},
 		},
 	); err != nil {
 		return err
@@ -112,7 +105,7 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 }
 
 func (h *Handler) OnSupportMessage(ctx context.Context, u telego.Update) error {
-	userID, err := h.userStore.Get(ctx, u.Message.MessageThreadID)
+	userID, err := h.store.UserIDByThreadID(ctx, u.Message.MessageThreadID)
 	if err != nil {
 		return err
 	}
