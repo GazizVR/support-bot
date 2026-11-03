@@ -2,4 +2,5 @@ package domain
 
 import "errors"
 
-var ErrTicketNotFound = errors.New("ticket not found")
+var ErrUserIDNotFound = errors.New("userid not found")
+var ErrThreadIDNotFound = errors.New("threadid not found")

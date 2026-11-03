@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/gazizvr/support-bot/internal/domain"
@@ -18,61 +19,52 @@ func NewStore(client *redis.Client) *Store {
 	}
 }
 
-const userIDKeyPrefix = "user:id"
-const threadIDKeyPrefix = "thread:id"
+const threadIDKeyPrefix string = "thread:id:"
 
-var getScript *redis.Script = redis.NewScript(`
-	local id = ARGV[1]
-
-	local userIDKeyPrefix = KEYS[1]
-	local userIDKey = userIDKeyPrefix .. id
-	local userID = tonumber(redis.call('get',userIDKey))
-
-	local threadIDKeyPrefix = KEYS[2]
-	local threadIDKey = threadIDKeyPrefix .. userID
-	local threadID = tonumber(redis.call('get',threadIDKey))
-
-	return {id, userID, threadID}	
-`)
-
-func (s *Store) Get(ctx context.Context, id int64) (*domain.Ticket, error) {
-	intr, err := getScript.Run(
-		ctx,
-		s.client,
-		[]string{userIDKeyPrefix, threadIDKeyPrefix},
-		id,
-	).Result()
+func (s *Store) GetThreadID(ctx context.Context, userID int64) (int, error) {
+	threadID, err := s.client.Get(ctx, fmt.Sprintf("%s%d", threadIDKeyPrefix, userID)).Int()
 	if err != nil {
-		return nil, err
+		if errors.Is(err, redis.Nil) {
+			return 0, domain.ErrThreadIDNotFound
+		} else {
+			return 0, err
+		}
 	}
-	ticket, ok := intr.(domain.Ticket)
-	if !ok {
-		return nil, domain.ErrTicketNotFound
-	}
-	return &ticket, nil
+	return threadID, nil
 }
 
-const seqKey string = "ticket:id:seq"
+const userIDKeyPrefix string = "user:id:"
+
+func (s *Store) GetUserID(ctx context.Context, threadID int) (int64, error) {
+	userID, err := s.client.Get(ctx, fmt.Sprintf("%s%d", userIDKeyPrefix, threadID)).Int64()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, domain.ErrUserIDNotFound
+		} else {
+			return 0, err
+		}
+	}
+	return userID, nil
+}
 
 var setScript *redis.Script = redis.NewScript(`
-	local seqKey = KEYS[1]
-	local id = redis.call('incr',seqKey)
-
-	local userIDKeyPrefix = KEYS[2]
-	local userIDKey = userIDKeyPrefix .. id
+	local userIDKeyPrefix = KEYS[1]
+    local threadIDKeyPrefix = KEYS[2]
+    
 	local userID = ARGV[1]
-	redis.call('set',userIDKey,userID)
-
-	local threadIDKeyPrefix = KEYS[3]
+    local threadID = ARGV[2]
+    
+    local userIDKey = userIDKeyPrefix .. threadID
+	redis.call('set', userIDKey, userID)
+	
 	local threadIDKey = threadIDKeyPrefix .. userID
-	local threadID = ARGV[2]
-	redis.call('set',threadIDKey,threadID)
+	redis.call('set', threadIDKey, threadID)
 `)
 
 func (s *Store) Create(ctx context.Context, userID int64, threadID int) error {
-	return setScript.Run(ctx, s.client, []string{seqKey, userIDKeyPrefix, threadIDKeyPrefix}, userID, threadID).Err()
-}
-
-func (s *Store) UserIDByThreadID(ctx context.Context, threadID int) (int64, error) {
-	return s.client.Get(ctx, fmt.Sprintf("%s:%d", threadIDKeyPrefix, threadID)).Int64()
+	err := setScript.Run(ctx, s.client, []string{userIDKeyPrefix, threadIDKeyPrefix}, userID, threadID).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	return nil
 }

@@ -10,8 +10,8 @@ import (
 )
 
 type Store interface {
-	Get(ctx context.Context, id int64) (*domain.Ticket, error)
-	UserIDByThreadID(ctx context.Context, threadID int) (int64, error)
+	GetThreadID(ctx context.Context, userID int64) (int, error)
+	GetUserID(ctx context.Context, threadID int) (int64, error)
 	Create(ctx context.Context, userID int64, threadID int) error
 }
 
@@ -66,9 +66,9 @@ func (h *Handler) OnGetChatID(ctx context.Context, u telego.Update) error {
 
 func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 	chatID := u.Message.Chat.ID
-	ticket, err := h.store.Get(ctx, chatID)
+	threadID, err := h.store.GetThreadID(ctx, chatID)
 	if err != nil {
-		if errors.Is(err, domain.ErrTicketNotFound) {
+		if errors.Is(err, domain.ErrThreadIDNotFound) {
 			topic, err := h.bot.CreateForumTopic(
 				ctx,
 				&telego.CreateForumTopicParams{
@@ -79,11 +79,8 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 			if err != nil {
 				return err
 			}
-			ticket = &domain.Ticket{
-				UserID:   chatID,
-				ThreadID: topic.MessageThreadID,
-			}
-			if err := h.store.Create(ctx, chatID, topic.MessageThreadID); err != nil {
+			threadID = topic.MessageThreadID
+			if err := h.store.Create(ctx, chatID, threadID); err != nil {
 				return err
 			}
 		} else {
@@ -94,9 +91,9 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 		ctx,
 		&telego.CopyMessageParams{
 			ChatID:          h.targetChatID,
-			MessageThreadID: ticket.ThreadID,
+			MessageThreadID: threadID,
 			MessageID:       u.Message.MessageID,
-			FromChatID:      telego.ChatID{ID: ticket.UserID},
+			FromChatID:      u.Message.Chat.ChatID(),
 		},
 	); err != nil {
 		return err
@@ -105,7 +102,7 @@ func (h *Handler) OnUserMessage(ctx context.Context, u telego.Update) error {
 }
 
 func (h *Handler) OnSupportMessage(ctx context.Context, u telego.Update) error {
-	userID, err := h.store.UserIDByThreadID(ctx, u.Message.MessageThreadID)
+	userID, err := h.store.GetUserID(ctx, u.Message.MessageThreadID)
 	if err != nil {
 		return err
 	}
